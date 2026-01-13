@@ -1,81 +1,106 @@
 import cv2
 import numpy as np
 
-"""
-HOW TO USE THIS SCRIPT:
+# ==========================================
+# CONFIGURATION
+# ==========================================
+# Path to your image file
+IMAGE_PATH = '132.png'
 
-Step 1. Get a image and drag it onto the Desktop. Name it test.jpg or change the path variable below.
-Step 2. Run this script. It will generate a text file on your Desktop named desmos_equations.txt.
-Step 3. Open desmos_equations.txt, copy all the equations, and paste them into Desmos (https://www.desmos.com/calculator).
+# Output text file path
+OUTPUT_FILE = 'desmos_equations.txt'
 
+# Accuracy of the vision (epsilon factor for contour approximation)
+# Smaller value = More equations, Higher accuracy, More detail
+# Larger value = Fewer equations, Lower accuracy, More jagged/abstract
+# Recommended range: 0.001 (very detailed) to 0.05 (very simplified)
+ACCURACY = 0.002 
 
-NOTES:
+# Invert y-axis? (Desmos y-axis goes up, images often go down)
+# Set True to flip the image so it looks right side up in Desmos
+FLIP_Y = True
 
-1. GRAPHING_INACCURACY_VALUE controls the accuracy of the approximation.
-The lower, the more accurate but the more equations.
+# Scale factor to fit in Desmos view comfortably (optional)
+SCALE = 0.1
+# ==========================================
 
-2. fhand is the output file where the Desmos equations will be written. Edit the USERNAME to your
-macOS username.
-
-3. path is the input image path. Edit the USERNAME to your macOS username.
-
-"""
-
-GRAPHING_INACCURACY_VALUE = 0.002  # adjust this to change the accuracy of the approximation. The lower, the more accurate but the more equations.
-fhand = open("/Users/USERNAME/Desktop/desmos_equations.txt", "w")
-path = "/Users/USERNAME/Desktop/test.jpg"
-
-
-def map_point(pt, w, h, scale):
-    x, y = pt
-    mx = (x - w / 2.0) * (2.0 * scale / w)
-    my = (h / 2.0 - y) * (2.0 * scale / h)
-    return mx, my
-
-def generate_desmos_equations(path, max_contours=200, scale=10.0, approx_epsilon=2.0, min_seg_len=0.01):
-    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+def image_to_desmos_equations(image_path, accuracy):
+    # 1. Load the image
+    img = cv2.imread(image_path)
     if img is None:
-        raise FileNotFoundError(path)
-    h, w = img.shape[:2]
-    blur = cv2.GaussianBlur(img, (5,5), 0)
-    edges = cv2.Canny(blur, 50, 150)
-    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
-    eqs = []
-    for ci, cnt in enumerate(contours):
-        if ci >= max_contours: break
-        peri = GRAPHING_INACCURACY_VALUE*cv2.arcLength(cnt, False)
-        eps = max(1.0, approx_epsilon * (peri / max(w,h)))
-        poly = cv2.approxPolyDP(cnt, eps, False)
-        pts = [tuple(p[0]) for p in poly]
-        if len(pts) < 2:
+        print(f"Error: Could not load image from {image_path}")
+        return
+
+    # 2. Preprocessing
+    # Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Detect edges using Canny
+    # You might need to adjust these threshold values for different images
+    edges = cv2.Canny(gray, 100, 200)
+
+    # 3. Find Contours
+    # RETR_LIST gets all contours, CHAIN_APPROX_SIMPLE saves memory
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    print(f"Found {len(contours)} contours. Processing...")
+
+    all_equations = []
+
+    for i, contour in enumerate(contours):
+        # 4. Approximate Contour
+        # epsilon is the maximum distance from contour to approximated contour
+        epsilon = accuracy * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
+        
+        # Convert numpy array to simple list of points
+        points = approx.reshape(-1, 2)
+        
+        # If less than 2 points, cannot make a line
+        if len(points) < 2:
             continue
-        # ensure closed by connecting last->first if far enough
-        closed = True
-        for i in range(len(pts)):
-            p0 = pts[i]
-            p1 = pts[(i+1) % len(pts)]
-            a = np.hypot(p1[0]-p0[0], p1[1]-p0[1])
-            if a < 1e-6:
-                closed = False
-                break
-        seg_count = len(pts) if closed else len(pts)-1
-        for i in range(seg_count):
-            p0 = pts[i]
-            p1 = pts[(i+1) % len(pts)]
-            x0, y0 = map_point(p0, w, h, scale)
-            x1, y1 = map_point(p1, w, h, scale)
-            dx = x1 - x0
-            dy = y1 - y0
-            if np.hypot(dx, dy) < min_seg_len:
-                continue
-            # Desmos parametric segment: (x0 + dx t, y0 + dy t) {0<=t<=1}
-            eq = "({:.4f} + {:.4f} t, {:.4f} + {:.4f} t)".format(x0, dx, y0, dy)
-            eqs.append(eq)
-    return eqs
+
+        # Iterate through points to create segments
+        num_points = len(points)
+        for j in range(num_points):
+            # Start point
+            p1 = points[j]
+            # End point (wrap around to 0 for the last point)
+            p2 = points[(j + 1) % num_points]
+            
+            x1 = p1[0] * SCALE
+            y1 = p1[1] * SCALE
+            
+            x2 = p2[0] * SCALE
+            y2 = p2[1] * SCALE
+            
+            if FLIP_Y:
+                y1 = -y1
+                y2 = -y2
+            
+            # Calculate deltas for parametric equation: P(t) = P1 + (P2 - P1)t
+            dx = x2 - x1
+            dy = y2 - y1
+            
+            # Format: (x1 + dx*t, y1 + dy*t)
+            # Using 6 decimal places as per user request example
+            eq_str = f"({x1:.6f} + {dx:.6f}t, {y1:.6f} + {dy:.6f}t)"
+            all_equations.append(eq_str)
+
+    # 5. Generate Output to File
+    try:
+        with open(OUTPUT_FILE, 'w') as f:
+            for eq in all_equations:
+                f.write(eq + "\n")
+        
+        print("\n" + "="*50)
+        print(f"SUCCESS! Equations saved to: {OUTPUT_FILE}")
+        print("="*50)
+        print(f"Generated {len(all_equations)} separate equations.")
+        print(f"Accuracy Level: {accuracy}")
+        
+    except Exception as e:
+        print(f"Error writing to file: {e}")
 
 if __name__ == "__main__":
-    for line in generate_desmos_equations(path):
-        fhand.write(line + "\n")
-
-
-# Created by Huatao
+    image_to_desmos_equations(IMAGE_PATH, ACCURACY)
