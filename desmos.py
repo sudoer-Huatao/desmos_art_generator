@@ -4,8 +4,8 @@ import numpy as np
 # ==========================================
 # CONFIGURATION
 # ==========================================
-# Path to your image file
-IMAGE_PATH = '132.png'
+# Path to your image file. IT HAS TO BE IN THE SAME FOLDER AS THE CODE
+IMAGE_PATH = 'CHANGETHISTOTHEACTUALFILENAME.png'
 
 # Output text file path
 OUTPUT_FILE = 'desmos_equations.txt'
